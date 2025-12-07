@@ -1,12 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Scratch Turbo Optimizer v3</title>
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.dist/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/svgo@3.0.5/dist/svgo.browser.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script> <!-- For real MD5 hashes -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
+
+  <!-- Load ffmpeg synchronously so FFmpeg global exists before our code runs -->
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.min.js"></script>
+
   <style>
     body{margin:0;font-family:system-ui;background:#0d0d0d;color:#fff;height:100vh;display:grid;place-items:center}
     .card{background:#1a1a1a;padding:40px;border-radius:24px;box-shadow:0 20px 40px #000;max-width:560px;width:90%}
@@ -14,7 +18,7 @@
     .dropzone{border:4px dashed #ff6b00;padding:80px 20px;border-radius:16px;margin:24px 0;transition:.3s;cursor:pointer}
     .dropzone.drag{background:#ff6b0020;border-color:#ffb300}
     button{background:#ff6b00;color:white;border:none;padding:14px 32px;font-size:18px;border-radius:12px;cursor:pointer;margin:8px}
-    button:disabled{opacity:0.5;cursor:not-allowed}
+    button:disabled{opacity:.5;cursor:not-allowed}
     .progress{height:32px;background:#333;border-radius:16px;overflow:hidden;margin:20px 0}
     .bar{height:100%;width:0%;background:linear-gradient(90deg,#ff6b00,#ffb300);transition:width .4s}
     .stats{font-family:monospace;background:#222;padding:16px;border-radius:12px;margin-top:20px}
@@ -34,7 +38,151 @@
     </div>
     <div id="stats" class="stats" style="display:none"></div>
   </div>
-  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.min.js"></script>
-  <script type="module" src="optimizer.js"></script>
+
+  <!-- Our code runs after everything above is loaded -->
+  <script type="module">
+    // Wait a few ms for the ffmpeg script to expose the global
+    await new Promise(r => setTimeout(r, 100));
+
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    const ffmpeg = createFFmpeg({ log: false });
+    let ffmpegLoaded = false;
+
+    const drop = document.getElementById("drop");
+    const status = document.getElementById("status");
+    const bar = document.getElementById("bar");
+    const downloadBtn = document.getElementById("download");
+    const cancelBtn = document.getElementById("cancel");
+    const statsDiv = document.getElementById("stats");
+    let cancelled = false;
+
+    cancelBtn.onclick = () => { cancelled = true; status.textContent = "Cancelled"; bar.style.width = "0%"; };
+
+    // … (rest of the code is identical to the last version I sent, just pasted below)
+
+    drop.ondragover = e => { e.preventDefault(); drop.classList.add("drag"); };
+    drop.ondragleave = () => drop.classList.remove("drag");
+    drop.ondrop = e => { e.preventDefault(); drop.classList.remove("drag"); processFile(e.dataTransfer.files[0]); };
+    drop.onclick = () => document.getElementById("fileInput")?.click() || 
+      (drop.innerHTML += `<input type="file" id="fileInput" accept=".sb3" style="display:none">`) && 
+      document.getElementById("fileInput").click();
+
+    document.addEventListener("change", e => e.target.id==="fileInput" && processFile(e.target.files[0]));
+
+    async function processFile(file) {
+      if (!file || !file.name.toLowerCase().endsWith(".sb3")) return status.textContent = "Invalid file";
+
+      cancelled = false; cancelBtn.style.display = "inline-block"; downloadBtn.style.display = "none"; statsDiv.style.display = "none";
+      status.textContent = "Loading project…"; bar.style.width = "5%";
+
+      const originalSize = file.size;
+      const zip = await JSZip.loadAsync(file);
+      const newZip = new JSZip();
+
+      const projectJson = JSON.parse(await zip.file("project.json").async("text"));
+
+      if (!ffmpegLoaded) {
+        status.textContent = "Downloading audio engine (first time only)…";
+        await ffmpeg.load();
+        ffmpegLoaded = true;
+      }
+
+      const assetMap = new Map();
+      const entries = Object.keys(zip.files).filter(p => p !== "project.json");
+      let processed = 0;
+
+      for (const path of entries) {
+        if (cancelled) break;
+        const entry = zip.file(path);
+        if (!entry) continue;
+
+        const ext = path.split('.').pop().toLowerCase();
+        let blob, newExt = ext;
+
+        try {
+          if (ext === "svg") {
+            const text = await entry.async("text");
+            const opt = SVGO.optimize(text, { multipass: true });
+            blob = new Blob([opt.data], {type: "image/svg+xml"});
+          } else if (["png","jpg","jpeg"].includes(ext)) {
+            const img = await createImageBitmap(await entry.async("blob"));
+            const canvas = new OffscreenCanvas(img.width, img.height);
+            canvas.getContext("2d").drawImage(img, 0, 0);
+            blob = await canvas.convertToBlob({type: "image/webp", quality: 80});
+            newExt = "webp";
+          } else if (["wav","mp3"].includes(ext)) {
+            const buf = await entry.async("arrayBuffer");
+            ffmpeg.FS("writeFile", path, new Uint8Array(buf));
+
+            // get duration
+            let logOutput = "";
+            ffmpeg.setLogger(info => logOutput += info.message);
+            await ffmpeg.run("-i", path, "-f", "null", "/dev/null");
+            ffmpeg.setLogger(() => {});
+
+            const dur = (logOutput.match(/Duration: (\d+):(\d+):([\d.]+)/) || [])
+              .slice(1).reduce((a,v,i) => a + v*60**(2-i), 0) || 999;
+
+            const outExt = dur < 5 ? "wav" : "mp3";
+            await ffmpeg.run("-i", path, "-ac", "1", "-ar", "16000", 
+              outExt==="wav" ? "-f", "wav" : "-c:a", "libmp3lame", "-q:a", "8", "out."+outExt);
+            blob = new Blob([ffmpeg.FS("readFile")("out."+outExt].buffer], {type: "audio/"+outExt});
+            newExt = outExt;
+            ffmpeg.FS("unlink", path);
+            ffmpeg.FS("unlink", "out."+outExt);
+          } else {
+            blob = await entry.async("blob");
+          }
+
+          const hash = md5(await blob.arrayBuffer());
+          const newName = hash + "." + newExt;
+          assetMap.set(path, newName);
+          newZip.file(newName, blob);
+        } catch (e) {
+          newZip.file(path, await entry.async("blob")); // fallback
+        }
+
+        processed++;
+        bar.style.width = 15 + 80*processed/entries.length + "%";
+      }
+
+      if (cancelled) return;
+
+      // update project.json references
+      projectJson.targets.forEach(t => {
+        ["costumes","sounds"].forEach(type => {
+          t[type]?.forEach(a => {
+            if (assetMap.has(a.md5ext)) {
+              const n = assetMap.get(a.md5ext);
+              [a.assetId, a.dataFormat, a.md5ext] = [n.split(".")[0], n.split(".")[1], n];
+            }
+          });
+        });
+      });
+
+      newZip.file("project.json", JSON.stringify(projectJson, null, 0));
+
+      status.textContent = "Zipping…";
+      const finalBlob = await newZip.generateAsync({type:"blob", compression:"DEFLATE"});
+
+      const savedKB = ((originalSize - finalBlob.size)/1024).toFixed(0);
+      statsDiv.innerHTML = `Original: ${(originalSize/1024/1024).toFixed(2)} MB<br>
+                           Optimized: ${(finalBlob.size/1024/1024).toFixed(2)} MB<br>
+                           <b>Saved ${savedKB} KB (${(100*(originalSize-finalBlob.size)/originalSize).toFixed(1)}%)</b>`;
+      statsDiv.style.display = "block";
+
+      const url = URL.createObjectURL(finalBlob);
+      downloadBtn.style.display = "inline-block";
+      downloadBtn.onclick = () => {
+        const a = document.createElement("a");
+        a.href = url; a.download = file.name.replace(".sb3", "_TURBO.sb3");
+        a.click();
+      };
+
+      status.textContent = "Done! Click download";
+      bar.style.width = "100%";
+      cancelBtn.style.display = "none";
+    }
+  </script>
 </body>
 </html>

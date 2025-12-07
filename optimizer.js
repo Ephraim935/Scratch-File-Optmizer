@@ -1,6 +1,3 @@
-import { createFFmpeg } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.min.js";
-
-const ffmpeg = createFFmpeg({ log: true }); // Enable logging
 let loadingFFmpeg = false;
 
 const drop = document.getElementById("drop");
@@ -68,7 +65,8 @@ async function processFile(file) {
   let processed = 0;
   const total = entries.length + 1; // +1 for json
 
-  // Preload ffmpeg if needed
+  // Preload ffmpeg if needed (global FFmpeg from script tag)
+  const ffmpeg = FFmpeg.createFFmpeg({ log: true });
   if (!ffmpeg.isLoaded() && !loadingFFmpeg) {
     loadingFFmpeg = true;
     status.textContent = "Downloading audio engine... (first time only)";
@@ -89,7 +87,7 @@ async function processFile(file) {
 
     const ext = path.split('.').pop().toLowerCase();
 
-    let newName, blob;
+    let newName, blob, newExt = ext;
     try {
       if (ext === "svg") {
         const text = await entry.async("text");
@@ -102,22 +100,21 @@ async function processFile(file) {
         const ctx = canvas.getContext("2d");
         ctx.drawImage(bitmap, 0, 0);
         blob = await canvas.convertToBlob({ type: "image/webp", quality: 0.80 });
-        ext = "webp"; // for newName
+        newExt = "webp";
       } else if (["wav","mp3"].includes(ext)) {
         const arrayBuffer = await entry.async("arraybuffer");
         ffmpeg.FS("writeFile", path, new Uint8Array(arrayBuffer));
 
         // Capture duration from logs
         let logs = '';
+        const originalLogger = ffmpeg.setLogger;
         ffmpeg.setLogger(({ message }) => {
           logs += message + '\n';
-          console.log(message); // Keep default logging
         });
 
         await ffmpeg.run('-i', path, '-f', 'null', '/dev/null');
 
-        // Reset to default logger (approx)
-        ffmpeg.setLogger(({ message }) => console.log(message));
+        ffmpeg.setLogger(originalLogger); // Reset
 
         const durationMatch = logs.match(/Duration: (\d+):(\d+):([\d.]+)/);
         const duration = durationMatch ? parseFloat(durationMatch[1]) * 3600 + parseFloat(durationMatch[2]) * 60 + parseFloat(durationMatch[3]) : 999;
@@ -135,7 +132,7 @@ async function processFile(file) {
 
         const data = ffmpeg.FS("readFile", outName);
         blob = new Blob([data.buffer], { type: "audio/" + outExt });
-        ext = outExt; // for newName
+        newExt = outExt;
 
         ffmpeg.FS("unlink", path);
         ffmpeg.FS("unlink", outName);
@@ -145,7 +142,7 @@ async function processFile(file) {
       }
 
       const newMd5 = await getMd5(blob);
-      newName = newMd5 + "." + ext;
+      newName = newMd5 + "." + newExt;
       assetMap.set(path, newName);
       newZip.file(newName, blob);
     } catch (err) {

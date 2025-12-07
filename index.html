@@ -6,6 +6,7 @@
   <title>Scratch Turbo Optimizer v3</title>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/svgo@3.0.5/dist/svgo.browser.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script> <!-- For real MD5 hashes -->
   <link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoiU2NyYXRjaCBUdXJibyIsInNob3J0X25hbWUiOiJUdXJibyIsInN0YXJ0X3VybCI6Ii8iLCJkaXNwbGF5Ijoic3RhbmRhbG9uZSIsImJhY2tncm91bmRfY29sb3IiOiIjMTIxMjEyIiwidGhlbWVfY29sb3IiOiIjZmY2YjAwIiwiaWNvbnMiOlt7InNyYyI6Imljb24ucG5nIiwic2l6ZXMiOiIxOTJ4MTkyIiwidHlwZSI6ImltYWdlL3BuZyJ9XX0=">
   <style>
     body{margin:0;font-family:system-ui;background:#0d0d0d;color:#fff;height:100vh;display:grid;place-items:center}
@@ -13,10 +14,10 @@
     h1{margin:0 0 16px;color:#ff6b00}
     .dropzone{border:4px dashed #ff6b00;padding:80px 20px;border-radius:16px;margin:24px 0;transition:.3s;cursor:pointer}
     .dropzone.drag{background:#ff6b0020;border-color:#ffb300}
-    button{background:#ff6f00ff;color:white;border:none;padding:14px 32px;font-size:18px;border-radius:12px;cursor:pointer;margin:8px}
+    button{background:#ff6b00;color:white;border:none;padding:14px 32px;font-size:18px;border-radius:12px;cursor:pointer;margin:8px}
     button:disabled{opacity:0.5;cursor:not-allowed}
     .progress{height:32px;background:#333;border-radius:16px;overflow:hidden;margin:20px 0}
-    .bar{height:100%;width:0%;background:linear-gradient(90deg,#6f00ff,#b300ff);transition:width .4s}
+    .bar{height:100%;width:0%;background:linear-gradient(90deg,#ff6b00,#ffb300);transition:width .4s}
     .stats{font-family:monospace;background:#222;padding:16px;border-radius:12px;margin-top:20px}
     .cancel{background:#ff0044!important}
   </style>

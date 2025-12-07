@@ -1,6 +1,6 @@
 import { createFFmpeg, fetchFile } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.min.js";
 
-const ffmpeg = createFFmpeg({ log: false });
+const ffmpeg = createFFmpeg({ log: true }); // Enable logging for duration grab
 let loadingFFmpeg = false;
 
 const drop = document.getElementById("drop");
@@ -22,12 +22,12 @@ drop.ondragleave = drop.ondrop = e => { e.preventDefault(); drop.classList.remov
 drop.ondrop = e => {
   e.preventDefault(); drop.classList.remove("drag");
   const file = e.dataTransfer.files[0];
-  if (file) processFile(file);
+  if (file) processFile(file).catch(err => status.textContent = `Error: ${err.message}`);
 };
 
 // Also support click-to-select
 document.body.addEventListener("change", e => {
-  if (e.target.id === "fileInput" && e.target.files[0]) processFile(e.target.files[0]);
+  if (e.target.id === "fileInput" && e.target.files[0]) processFile(e.target.files[0]).catch(err => status.textContent = `Error: ${err.message}`);
 });
 
 async function processFile(file) {
@@ -87,7 +87,8 @@ async function processFile(file) {
       const text = await entry.async("text");
       const optimized = SVGO.optimize(text, { multipass: true, path });
       const blob = new Blob([optimized.data], { type: "image/svg+xml" });
-      const newName = await md5(blob) + ".svg";
+      const newMd5 = await getMd5(blob);
+      const newName = newMd5 + ".svg";
       assetMap.set(path, newName);
       newZip.file(newName, blob);
     }
@@ -98,7 +99,8 @@ async function processFile(file) {
       const ctx = canvas.getContext("2d");
       ctx.drawImage(bitmap, 0, 0);
       const webpBlob = await canvas.convertToBlob({ type: "image/webp", quality: 0.80 });
-      const newName = await md5(webpBlob) + ".webp";
+      const newMd5 = await getMd5(webpBlob);
+      const newName = newMd5 + ".webp";
       assetMap.set(path, newName);
       newZip.file(newName, webpBlob);
     }
@@ -107,9 +109,17 @@ async function processFile(file) {
       const uint8 = new Uint8Array(arrayBuffer);
       ffmpeg.FS("writeFile", path, uint8);
 
-      // Get duration
-      await ffmpeg.run("-i", path, "-f", "null", "/dev/null");
-      const duration = parseFloat(ffmpeg.FS("readFile", "stderr").toString().match(/Duration: (\d+):(\d+):([\d.]+)/)?.slice(1).reduce((acc, v, i) => acc + v * Math.pow(60, 1-i), 0) || 999);
+      // Capture logs for duration
+      let logs = '';
+      const oldLogger = ffmpeg.setLogger;
+      ffmpeg.setLogger(({ message }) => { logs += message + '\n'; });
+
+      await ffmpeg.run('-i', path, '-f', 'null', '-map', '0:a', '/dev/null');
+
+      ffmpeg.setLogger(oldLogger); // Reset
+
+      const durationMatch = logs.match(/Duration: (\d+):(\d+):([\d.]+)/);
+      const duration = durationMatch ? parseFloat(durationMatch[1]) * 3600 + parseFloat(durationMatch[2]) * 60 + parseFloat(durationMatch[3]) : 999;
 
       const outExt = (duration < 5) ? "wav" : "mp3";
       const outName = "out." + outExt;
@@ -121,8 +131,9 @@ async function processFile(file) {
       }
 
       const data = ffmpeg.FS("readFile", outName);
-      const blob = new Blob([data], { type: "audio/" + outExt });
-      const newName = await md5(blob) + "." + outExt;
+      const blob = new Blob([data.buffer], { type: "audio/" + outExt });
+      const newMd5 = await getMd5(blob);
+      const newName = newMd5 + "." + outExt;
       assetMap.set(path, newName);
       newZip.file(newName, blob);
 
@@ -161,13 +172,13 @@ async function processFile(file) {
   if (projectJson.extensions) ; // skip
 
   // Minify + write project.json
-  newZip.file("project.json", JSON.stringify(projectJson, null, 0));
+  newZip.file("project.json", JSON.stringify(projectJson));
 
   bar.style.width = "100%";
   status.textContent = "Compressing final .sb3...";
 
   const finalBlob = await newZip.generateAsync({ type: "blob", compression: "DEFLATE" }, meta => {
-    bar.style.width = `${95 + 5 * meta.percent / 100}%`;
+    bar.style.width = `${95 + 5 * (meta.percent / 100)}%`;
   });
 
   const saved = originalSize - finalBlob.size;
@@ -201,9 +212,10 @@ function cleanup() {
   statsDiv.style.display = "none";
 }
 
-// Simple fast md5 in browser
-async function md5(blob) {
-  const buffer = await blob.arrayBuffer();
-  const hash = await crypto.subtle.digest("SHA-256", buffer);
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,"0")).join("").slice(0,32);
+// MD5 hash (using blueimp-md5)
+async function getMd5(blob) {
+  const arrayBuffer = await blob.arrayBuffer();
+  const uint8Array = new Uint8Array(arrayBuffer);
+  const hashArray = md5(uint8Array); // blueimp-md5 returns hex string
+  return hashArray;
 }

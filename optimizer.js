@@ -1,6 +1,6 @@
-import { createFFmpeg, fetchFile } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.min.js";
+import { createFFmpeg } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.min.js";
 
-const ffmpeg = createFFmpeg({ log: true }); // Enable logging for duration grab
+const ffmpeg = createFFmpeg({ log: true }); // Enable logging
 let loadingFFmpeg = false;
 
 const drop = document.getElementById("drop");
@@ -13,25 +13,33 @@ const statsDiv = document.getElementById("stats");
 let cancelled = false;
 cancelBtn.onclick = () => { cancelled = true; status.textContent = "Cancelled by user"; };
 
-drop.onclick = () => document.getElementById("fileInput")?.click() || (drop.innerHTML = `<input type="file" id="fileInput" accept=".sb3" style="display:none">`);
-document.body.onclick = e => { if (e.target === drop) document.getElementById("fileInput")?.click(); };
+drop.onclick = () => {
+  let input = document.getElementById("fileInput");
+  if (!input) {
+    drop.innerHTML += '<input type="file" id="fileInput" accept=".sb3" style="display:none">';
+    input = document.getElementById("fileInput");
+  }
+  input.click();
+};
 
 drop.ondragover = e => { e.preventDefault(); drop.classList.add("drag"); };
-drop.ondragleave = drop.ondrop = e => { e.preventDefault(); drop.classList.remove("drag"); };
-
+drop.ondragleave = () => drop.classList.remove("drag");
 drop.ondrop = e => {
   e.preventDefault(); drop.classList.remove("drag");
   const file = e.dataTransfer.files[0];
   if (file) processFile(file).catch(err => status.textContent = `Error: ${err.message}`);
 };
 
-// Also support click-to-select
-document.body.addEventListener("change", e => {
+// Support click-to-select
+document.addEventListener("change", e => {
   if (e.target.id === "fileInput" && e.target.files[0]) processFile(e.target.files[0]).catch(err => status.textContent = `Error: ${err.message}`);
 });
 
 async function processFile(file) {
-  if (!file.name.toLowerCase().endsWith(".sb3")) return status.textContent = "Please select a .sb3 file";
+  if (!file.name.toLowerCase().endsWith(".sb3")) {
+    status.textContent = "Please select a .sb3 file";
+    return;
+  }
   
   cancelled = false;
   cancelBtn.style.display = "inline-block";
@@ -48,15 +56,17 @@ async function processFile(file) {
   let projectJson = null;
 
   // Load project.json first
-  if (zip.file("project.json")) {
-    projectJson = JSON.parse(await zip.file("project.json").async("text"));
+  const projectEntry = zip.file("project.json");
+  if (projectEntry) {
+    projectJson = JSON.parse(await projectEntry.async("text"));
   } else {
-    return status.textContent = "No project.json found!";
+    status.textContent = "No project.json found!";
+    return;
   }
 
-  const entries = Object.keys(zip.files);
+  const entries = Object.keys(zip.files).filter(path => path !== "project.json");
   let processed = 0;
-  const total = entries.length;
+  const total = entries.length + 1; // +1 for json
 
   // Preload ffmpeg if needed
   if (!ffmpeg.isLoaded() && !loadingFFmpeg) {
@@ -79,69 +89,68 @@ async function processFile(file) {
 
     const ext = path.split('.').pop().toLowerCase();
 
-    if (path === "project.json") {
-      // We'll write minified version at the end
-      continue;
-    }
-    else if (ext === "svg") {
-      const text = await entry.async("text");
-      const optimized = SVGO.optimize(text, { multipass: true, path });
-      const blob = new Blob([optimized.data], { type: "image/svg+xml" });
-      const newMd5 = await getMd5(blob);
-      const newName = newMd5 + ".svg";
-      assetMap.set(path, newName);
-      newZip.file(newName, blob);
-    }
-    else if (["png","jpg","jpeg"].includes(ext)) {
-      const blob = await entry.async("blob");
-      const bitmap = await createImageBitmap(blob);
-      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(bitmap, 0, 0);
-      const webpBlob = await canvas.convertToBlob({ type: "image/webp", quality: 0.80 });
-      const newMd5 = await getMd5(webpBlob);
-      const newName = newMd5 + ".webp";
-      assetMap.set(path, newName);
-      newZip.file(newName, webpBlob);
-    }
-    else if (["wav","mp3"].includes(ext)) {
-      const arrayBuffer = await entry.async("arraybuffer");
-      const uint8 = new Uint8Array(arrayBuffer);
-      ffmpeg.FS("writeFile", path, uint8);
+    let newName, blob;
+    try {
+      if (ext === "svg") {
+        const text = await entry.async("text");
+        const optimized = SVGO.optimize(text, { multipass: true, path });
+        blob = new Blob([optimized.data], { type: "image/svg+xml" });
+      } else if (["png","jpg","jpeg"].includes(ext)) {
+        const imgBlob = await entry.async("blob");
+        const bitmap = await createImageBitmap(imgBlob);
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(bitmap, 0, 0);
+        blob = await canvas.convertToBlob({ type: "image/webp", quality: 0.80 });
+        ext = "webp"; // for newName
+      } else if (["wav","mp3"].includes(ext)) {
+        const arrayBuffer = await entry.async("arraybuffer");
+        ffmpeg.FS("writeFile", path, new Uint8Array(arrayBuffer));
 
-      // Capture logs for duration
-      let logs = '';
-      const oldLogger = ffmpeg.setLogger;
-      ffmpeg.setLogger(({ message }) => { logs += message + '\n'; });
+        // Capture duration from logs
+        let logs = '';
+        ffmpeg.setLogger(({ message }) => {
+          logs += message + '\n';
+          console.log(message); // Keep default logging
+        });
 
-      await ffmpeg.run('-i', path, '-f', 'null', '-map', '0:a', '/dev/null');
+        await ffmpeg.run('-i', path, '-f', 'null', '/dev/null');
 
-      ffmpeg.setLogger(oldLogger); // Reset
+        // Reset to default logger (approx)
+        ffmpeg.setLogger(({ message }) => console.log(message));
 
-      const durationMatch = logs.match(/Duration: (\d+):(\d+):([\d.]+)/);
-      const duration = durationMatch ? parseFloat(durationMatch[1]) * 3600 + parseFloat(durationMatch[2]) * 60 + parseFloat(durationMatch[3]) : 999;
+        const durationMatch = logs.match(/Duration: (\d+):(\d+):([\d.]+)/);
+        const duration = durationMatch ? parseFloat(durationMatch[1]) * 3600 + parseFloat(durationMatch[2]) * 60 + parseFloat(durationMatch[3]) : 999;
 
-      const outExt = (duration < 5) ? "wav" : "mp3";
-      const outName = "out." + outExt;
+        const outExt = (duration < 5) ? "wav" : "mp3";
+        const outName = "out." + outExt;
 
-      if (outExt === "wav") {
-        await ffmpeg.run("-i", path, "-ac", "1", "-ar", "16000", "-f", "wav", outName);
+        const args = ["-i", path, "-ac", "1", "-ar", "16000"];
+        if (outExt === "wav") {
+          args.push("-f", "wav", outName);
+        } else {
+          args.push("-c:a", "libmp3lame", "-q:a", "8", outName);
+        }
+        await ffmpeg.run(...args);
+
+        const data = ffmpeg.FS("readFile", outName);
+        blob = new Blob([data.buffer], { type: "audio/" + outExt });
+        ext = outExt; // for newName
+
+        ffmpeg.FS("unlink", path);
+        ffmpeg.FS("unlink", outName);
       } else {
-        await ffmpeg.run("-i", path, "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-q:a", "8", outName);
+        // Copy unchanged
+        blob = await entry.async("blob");
       }
 
-      const data = ffmpeg.FS("readFile", outName);
-      const blob = new Blob([data.buffer], { type: "audio/" + outExt });
       const newMd5 = await getMd5(blob);
-      const newName = newMd5 + "." + outExt;
+      newName = newMd5 + "." + ext;
       assetMap.set(path, newName);
       newZip.file(newName, blob);
-
-      ffmpeg.FS("unlink", path);
-      ffmpeg.FS("unlink", outName);
-    }
-    else {
-      // Copy unchanged
+    } catch (err) {
+      console.error(`Error optimizing ${path}:`, err);
+      // Fallback to original if error
       newZip.file(path, await entry.async("blob"));
     }
 
@@ -154,40 +163,37 @@ async function processFile(file) {
   // Fix project.json references
   function updateAssets(obj) {
     ["costumes","sounds"].forEach(type => {
-      if (!obj[type]) return;
-      obj[type].forEach(asset => {
-        const old = asset.md5ext;
-        if (assetMap.has(old)) {
-          const parts = assetMap.get(old).split(".");
-          asset.assetId = parts[0];
-          asset.dataFormat = parts[1];
-          asset.md5ext = assetMap.get(old);
-        }
-      });
+      if (obj[type]) {
+        obj[type].forEach(asset => {
+          const old = asset.md5ext;
+          if (assetMap.has(old)) {
+            const parts = assetMap.get(old).split(".");
+            asset.assetId = parts[0];
+            asset.dataFormat = parts[1];
+            asset.md5ext = assetMap.get(old);
+          }
+        });
+      }
     });
   }
 
-  projectJson.targets.forEach(target => updateAssets(target));
-  if (projectJson.monitors) ; // skip
-  if (projectJson.extensions) ; // skip
+  projectJson.targets.forEach(updateAssets);
 
   // Minify + write project.json
-  newZip.file("project.json", JSON.stringify(projectJson));
+  newZip.file("project.json", JSON.stringify(projectJson, null, 0));
 
-  bar.style.width = "100%";
+  bar.style.width = "95%";
   status.textContent = "Compressing final .sb3...";
 
-  const finalBlob = await newZip.generateAsync({ type: "blob", compression: "DEFLATE" }, meta => {
-    bar.style.width = `${95 + 5 * (meta.percent / 100)}%`;
-  });
+  const finalBlob = await newZip.generateAsync({ type: "blob", compression: "DEFLATE" });
 
   const saved = originalSize - finalBlob.size;
   const percent = (saved / originalSize * 100).toFixed(1);
 
   statsDiv.style.display = "block";
   statsDiv.innerHTML = `
-    Original: ${(originalSize/1024/1024).toFixed(2)} MB<br>
-    Optimized: ${(finalBlob.size/1024/1024).toFixed(2)} MB<br>
+    Original: ${(originalSize / 1024 / 1024).toFixed(2)} MB<br>
+    Optimized: ${(finalBlob.size / 1024 / 1024).toFixed(2)} MB<br>
     <b>Saved ${saved > 1024*1024 ? (saved/1024/1024).toFixed(1)+" MB" : (saved/1024).toFixed(0)+" KB"} (${percent}% reduction)</b>
   `;
 
@@ -196,12 +202,13 @@ async function processFile(file) {
   downloadBtn.onclick = () => {
     const a = document.createElement("a");
     a.href = url;
-    a.download = file.name.replace(/\.sb3$/i, "") + "_TURBO.sb3";
+    a.download = file.name.replace(/\.sb3$/i, "_TURBO.sb3");
     a.click();
   };
 
   status.textContent = "Complete! Click download";
   cancelBtn.style.display = "none";
+  bar.style.width = "100%";
 }
 
 function cleanup() {
@@ -212,10 +219,8 @@ function cleanup() {
   statsDiv.style.display = "none";
 }
 
-// MD5 hash (using blueimp-md5)
+// MD5 hash
 async function getMd5(blob) {
-  const arrayBuffer = await blob.arrayBuffer();
-  const uint8Array = new Uint8Array(arrayBuffer);
-  const hashArray = md5(uint8Array); // blueimp-md5 returns hex string
-  return hashArray;
+  const buffer = await blob.arrayBuffer();
+  return md5(new Uint8Array(buffer));
 }

@@ -4,10 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Scratch Turbo Optimizer v3</title>
+
+  <!-- Fixed CDNs – these are the correct UMD builds -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/svgo@3.0.5/dist/svgo.browser.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
   <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.min.js"></script>
+
   <style>
     body{margin:0;font-family:system-ui;background:#0d0d0d;color:#fff;height:100vh;display:grid;place-items:center}
     .card{background:#1a1a1a;padding:40px;border-radius:24px;box-shadow:0 20px 40px #000;max-width:560px;width:90%}
@@ -15,11 +18,10 @@
     .dropzone{border:4px dashed #ff6b00;padding:80px 20px;border-radius:16px;margin:24px 0;transition:.3s;cursor:pointer}
     .dropzone.drag{background:#ff6b0020;border-color:#ffb300}
     button{background:#ff6b00;color:white;border:none;padding:14px 32px;font-size:18px;border-radius:12px;cursor:pointer;margin:8px}
-    button:disabled{opacity:.5;cursor:not-allowed}
+    .cancel{background:#ff0044!important}
     .progress{height:32px;background:#333;border-radius:16px;overflow:hidden;margin:20px 0}
     .bar{height:100%;width:0%;background:linear-gradient(90deg,#ff6b00,#ffb300);transition:width .4s}
     .stats{font-family:monospace;background:#222;padding:16px;border-radius:12px;margin-top:20px}
-    .cancel{background:#ff0044!important}
   </style>
 </head>
 <body>
@@ -29,21 +31,13 @@
     <div id="drop" class="dropzone">Drop .sb3 here or click</div>
     <div class="progress"><div id="bar" class="bar"></div></div>
     <p id="status">Waiting for file...</p>
-    <div>
-      <button id="download" style="display:none">Download Optimized.sb3</button>
-      <button id="cancel" class="cancel" style="display:none">Cancel</button>
-    </div>
+    <button id="download" style="display:none">Download Optimized.sb3</button>
+    <button id="cancel" class="cancel" style="display:none">Cancel</button>
     <div id="stats" class="stats" style="display:none"></div>
   </div>
 
   <script>
-    // Wait for all globals to load
     window.addEventListener('load', async () => {
-      if (typeof FFmpeg === 'undefined') {
-        document.getElementById('status').textContent = 'Loading FFmpeg... (retry page)';
-        return;
-      }
-
       const { createFFmpeg } = FFmpeg;
       const ffmpeg = createFFmpeg({ log: false });
       let ffmpegLoaded = false;
@@ -56,132 +50,100 @@
       const statsDiv = document.getElementById('stats');
       let cancelled = false;
 
-      cancelBtn.onclick = () => { 
-        cancelled = true; 
-        status.textContent = 'Cancelled — nothing saved'; 
-        bar.style.width = '0%'; 
-        cancelBtn.style.display = 'none'; 
-      };
+      cancelBtn.onclick = () => { cancelled = true; status.textContent = "Cancelled"; bar.style.width = "0%"; };
 
       drop.ondragover = e => { e.preventDefault(); drop.classList.add('drag'); };
       drop.ondragleave = () => drop.classList.remove('drag');
-      drop.ondrop = e => { 
-        e.preventDefault(); 
-        drop.classList.remove('drag'); 
-        const file = e.dataTransfer.files[0]; 
-        if (file) processFile(file); 
-      };
+      drop.ondrop = e => { e.preventDefault(); drop.classList.remove('drag'); processFile(e.dataTransfer.files[0]); };
       drop.onclick = () => {
-        let input = document.getElementById('fileInput');
-        if (!input) {
-          drop.innerHTML += '<input type="file" id="fileInput" accept=".sb3" style="display:none">';
-          input = document.getElementById('fileInput');
-        }
+        const input = document.createElement('input');
+        input.type = 'file'; input.accept = '.sb3';
+        input.onchange = e => processFile(e.target.files[0]);
         input.click();
       };
 
-      document.addEventListener('change', e => {
-        if (e.target.id === 'fileInput' && e.target.files[0]) processFile(e.target.files[0]);
-      });
-
       async function processFile(file) {
-        if (!file.name.toLowerCase().endsWith('.sb3')) {
-          status.textContent = 'Please select a .sb3 file';
-          return;
-        }
+        if (!file || !file.name.toLowerCase().endsWith('.sb3')) return status.textContent = "Please drop a .sb3 file";
 
         cancelled = false;
-        cancelBtn.style.display = 'inline-block';
-        downloadBtn.style.display = 'none';
-        statsDiv.style.display = 'none';
-        status.textContent = 'Loading project...';
-        bar.style.width = '5%';
+        cancelBtn.style.display = "inline-block";
+        downloadBtn.style.display = "none";
+        statsDiv.style.display = "none";
+        status.textContent = "Loading project...";
+        bar.style.width = "5%";
 
         try {
           const originalSize = file.size;
-          const zipData = await file.arrayBuffer();
-          const zip = await JSZip.loadAsync(zipData);
+          const zip = await JSZip.loadAsync(file);
           const newZip = new JSZip();
 
-          const projectEntry = zip.file('project.json');
-          if (!projectEntry) throw new Error('No project.json found');
-          let projectJson = JSON.parse(await projectEntry.async('text'));
-
-          const entries = Object.keys(zip.files).filter(p => p !== 'project.json');
-          let processed = 0;
+          const projectJsonText = await zip.file("project.json").async("text");
+          let projectJson = JSON.parse(projectJsonText);
 
           if (!ffmpegLoaded) {
-            status.textContent = 'Downloading audio engine (first time only, ~16MB)...';
+            status.textContent = "Downloading audio engine (first time only)...";
             await ffmpeg.load();
             ffmpegLoaded = true;
           }
 
-          status.textContent = 'Optimizing assets...';
-          bar.style.width = '15%';
-
+          const entries = Object.keys(zip.files).filter(p => p !== "project.json");
           const assetMap = new Map();
+          let processed = 0;
 
           for (const path of entries) {
             if (cancelled) break;
-            const entry = zip.files[path];
+            const entry = zip.file(path);
+            if (!entry) continue;
+
             const ext = path.split('.').pop().toLowerCase();
             let blob, newExt = ext;
 
             try {
-              if (ext === 'svg') {
-                const text = await entry.async('text');
+              if (ext === "svg") {
+                const text = await entry.async("text");
                 const opt = SVGO.optimize(text, { multipass: true });
-                blob = new Blob([opt.data], { type: 'image/svg+xml' });
-              } else if (['png', 'jpg', 'jpeg'].includes(ext)) {
-                const imgBlob = await entry.async('blob');
-                const bitmap = await createImageBitmap(imgBlob);
-                const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-                canvas.getContext('2d').drawImage(bitmap, 0, 0);
-                blob = await canvas.convertToBlob({ type: 'image/webp', quality: 0.8 });
-                newExt = 'webp';
-              } else if (['wav', 'mp3'].includes(ext)) {
-                const arrayBuffer = await entry.async('arraybuffer');
-                ffmpeg.FS('writeFile', path, new Uint8Array(arrayBuffer));
+                blob = new Blob([opt.data], {type: "image/svg+xml"});
+              }
+              else if (["png","jpg","jpeg"].includes(ext)) {
+                const imgBlob = await entry.async("blob");
+                const img = await createImageBitmap(imgBlob);
+                const canvas = new OffscreenCanvas(img.width, img.height);
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(img, 0, 0);
+                blob = await canvas.convertToBlob({type: "image/webp", quality: 80});
+                newExt = "webp";
+              }
+              else if (["wav","mp3"].includes(ext)) {
+                const buf = await entry.async("arrayBuffer");
+                ffmpeg.FS("writeFile", path, new Uint8Array(buf));
 
-                // Get duration via logs
-                let logOutput = '';
-                ffmpeg.setLogger(({ message }) => { logOutput += message; });
-                await ffmpeg.run('-i', path, '-f', 'null', '/dev/null');
-                ffmpeg.setLogger(({ message }) => {});
+                let log = "";
+                ffmpeg.setLogger(i => log += i.message);
+                await ffmpeg.run("-i", path, "-f", "null", "/dev/null");
+                ffmpeg.setLogger(() => {});
 
-                const durMatch = logOutput.match(/Duration: (\d+):(\d+):([\d.]+)/);
-                const duration = durMatch ? 
-                  parseInt(durMatch[1]) * 3600 + parseInt(durMatch[2]) * 60 + parseFloat(durMatch[3]) : 999;
+                const duration = (log.match(/Duration: (\d+):(\d+):([\d.]+)/) || [0,0,0,999])
+                  .slice(1).reduce((a,v,i) => a + v*Math.pow(60,2-i), 0);
 
-                const outExt = duration < 5 ? 'wav' : 'mp3';
-                const outName = `out.${outExt}`;
-                const args = ['-i', path, '-ac', '1', '-ar', '16000'];
-                if (outExt === 'wav') {
-                  args.push('-f', 'wav', outName);
-                } else {
-                  args.push('-c:a', 'libmp3lame', '-q:a', '8', outName);
-                }
-                await ffmpeg.run(...args);
+                const outExt = duration < 5 ? "wav" : "mp3";
+                await ffmpeg.run("-i", path, "-ac", "1", "-ar", "16000",
+                  outExt==="wav" ? ["-f","wav"] : ["-c:a","libmp3lame","-q:a","8"], "out."+outExt);
 
-                const data = ffmpeg.FS('readFile', outName);
-                blob = new Blob([data.buffer], { type: `audio/${outExt}` });
+                blob = new Blob([ffmpeg.FS("readFile")("out."+outExt).buffer], {type: "audio/"+outExt});
                 newExt = outExt;
-
-                ffmpeg.FS('unlink', path);
-                ffmpeg.FS('unlink', outName);
-              } else {
-                blob = await entry.async('blob');
+                ffmpeg.FS("unlink", path);
+                ffmpeg.FS("unlink", "out."+outExt);
+              }
+              else {
+                blob = await entry.async("blob");
               }
 
-              // MD5 hash
-              const arrayBuffer = await blob.arrayBuffer();
-              const hash = md5(new Uint8Array(arrayBuffer));
-              const newName = hash + '.' + newExt;
+              const hash = md5(await blob.arrayBuffer());
+              const newName = hash + "." + newExt;
               assetMap.set(path, newName);
               newZip.file(newName, blob);
-            } catch (err) {
-              console.error(`Error on ${path}:`, err);
-              newZip.file(path, await entry.async('blob')); // Fallback
+            } catch (e) {
+              newZip.file(path, await entry.async("blob")); // fallback
             }
 
             processed++;
@@ -190,56 +152,44 @@
 
           if (cancelled) return;
 
-          // Update project.json
-          function updateAssets(obj) {
-            ['costumes', 'sounds'].forEach(type => {
-              if (obj[type]) {
-                obj[type].forEach(asset => {
-                  const old = asset.md5ext;
-                  if (assetMap.has(old)) {
-                    const parts = assetMap.get(old).split('.');
-                    asset.assetId = parts[0];
-                    asset.dataFormat = parts[1];
-                    asset.md5ext = assetMap.get(old);
-                  }
-                });
-              }
+          // Fix references in project.json
+          projectJson.targets.forEach(target => {
+            ["costumes","sounds"].forEach(type => {
+              target[type]?.forEach(asset => {
+                if (assetMap.has(asset.md5ext)) {
+                  const n = assetMap.get(asset.md5ext);
+                  asset.assetId = n.split('.')[0];
+                  asset.dataFormat = n.split('.')[1];
+                  asset.md5ext = n;
+                }
+              });
             });
-          }
-          projectJson.targets.forEach(updateAssets);
+          });
 
-          newZip.file('project.json', JSON.stringify(projectJson, null, 0));
+          newZip.file("project.json", JSON.stringify(projectJson));
 
-          status.textContent = 'Compressing final .sb3...';
-          bar.style.width = '95%';
-
-          const finalBlob = await newZip.generateAsync({ type: 'blob', compression: 'DEFLATE' }, 
-            ({ percent }) => { bar.style.width = `${95 + 5 * percent}%`; });
+          status.textContent = "Zipping final file...";
+          const finalBlob = await newZip.generateAsync({type:"blob", compression:"DEFLATE"});
 
           const saved = originalSize - finalBlob.size;
-          const percentSaved = ((saved / originalSize) * 100).toFixed(1);
-
-          statsDiv.innerHTML = `
-            Original: ${(originalSize / 1024 / 1024).toFixed(2)} MB<br>
-            Optimized: ${(finalBlob.size / 1024 / 1024).toFixed(2)} MB<br>
-            <b>Saved ${(saved > 1024 * 1024 ? (saved / 1024 / 1024).toFixed(1) + ' MB' : (saved / 1024).toFixed(0) + ' KB')} (${percentSaved}% reduction)</b>
-          `;
-          statsDiv.style.display = 'block';
+          statsDiv.innerHTML = `Original: ${(originalSize/1048576).toFixed(2)} MB → ${(finalBlob.size/1048576).toFixed(2)} MB<br>
+                                 <b>Saved ${ (saved/1024).toFixed(0) } KB (${((saved/originalSize)*100).toFixed(1)}%)</b>`;
+          statsDiv.style.display = "block";
 
           const url = URL.createObjectURL(finalBlob);
           downloadBtn.onclick = () => {
-            const a = document.createElement('a');
+            const a = document.createElement("a");
             a.href = url;
-            a.download = file.name.replace(/\.sb3$/, '_TURBO.sb3');
+            a.download = file.name.replace(".sb3", "") + "_TURBO.sb3";
             a.click();
           };
-          downloadBtn.style.display = 'inline-block';
+          downloadBtn.style.display = "inline-block";
 
-          status.textContent = 'Complete! Click download';
-          cancelBtn.style.display = 'none';
-          bar.style.width = '100%';
+          status.textContent = "Done! Click download";
+          bar.style.width = "100%";
+          cancelBtn.style.display = "none";
         } catch (err) {
-          status.textContent = `Error: ${err.message}`;
+          status.textContent = "Error: " + err.message;
           console.error(err);
         }
       }

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Scratch Turbo Optimizer v8 — Perfect & Final</title>
+<title>Scratch Turbo Optimizer v8.1 — Drag/Click Fixed</title>
 <link rel="icon" href="data:,">
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
@@ -10,20 +10,25 @@
   body{margin:0;font-family:system-ui;background:#0f0f0f;color:#fff;height:100vh;display:grid;place-items:center}
   .box{background:#1a1a1a;padding:40px;border-radius:20px;max-width:560px;width:90%;text-align:center;box-shadow:0 20px 40px #000}
   h1{color:#ff6b00;margin:0 0 16px}
-  #drop{border:4px dashed #ff6b00;padding:80px 20px;border-radius:16px;margin:24px 0;cursor:pointer;font-size:19px;transition:.3s}
+  #drop{border:4px dashed #ff6b00;padding:80px 20px;border-radius:16px;margin:24px 0;cursor:pointer;font-size:19px;transition:.3s;position:relative}
   #drop.drag{background:#ff6b0020;border-color:#ffb300}
   button{background:#ff6b00;color:#fff;border:none;padding:14px 32px;font-size:18px;border-radius:12px;cursor:pointer;margin:8px}
   .cancel{background:#ff0044}
   .progress{height:36px;background:#333;border-radius:18px;overflow:hidden;margin:20px 0}
-  .bar{height:100%;width:0%;background:linear-gradient(90deg,#ff6b300,#ff6b00);transition:.4s}
+  .bar{height:100%;width:0%;background:linear-gradient(90deg,#ff6b00,#ffb300);transition:.4s}
   .stats{background:#222;padding:16px;border-radius:12px;margin-top:20px;font-family:monospace}
+  #fileInput{position:absolute;opacity:0;width:100%;height:100%;cursor:pointer;top:0;left:0}
+  #testBtn{background:#00ff00;color:#000;margin:10px}
 </style>
 </head>
 <body>
 <div class="box">
-  <h1>Scratch Turbo Optimizer v8</h1>
-  <p>Drop any .sb3 → 80–92% smaller instantly<br><b>No errors · Works everywhere</b></p>
-  <div id="drop">Drop .sb3 here or click</div>
+  <h1>Scratch Turbo Optimizer v8.1</h1>
+  <p>Drop .sb3 → 80–92% smaller instantly<br><b>Fixed drag/click · Report bugs for updates</b></p>
+  <button id="testBtn" onclick="alert('JS works!')">Test JS</button>
+  <div id="drop">Drop .sb3 here or click<br><small>(Fixed for all browsers)</small>
+    <input id="fileInput" type="file" accept=".sb3">
+  </div>
   <div class="progress"><div id="bar" class="bar"></div></div>
   <p id="msg">Ready</p>
   <button id="dl" style="display:none">Download Optimized.sb3</button>
@@ -32,6 +37,11 @@
 </div>
 
 <script>
+// Global prevent defaults (stops browser opens on drag)
+['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+  document.addEventListener(eventName, e => e.preventDefault());
+});
+
 let cancel = false;
 
 document.getElementById("cancel").onclick = () => {
@@ -41,15 +51,25 @@ document.getElementById("cancel").onclick = () => {
 };
 
 const drop = document.getElementById("drop");
+const fileInput = document.getElementById("fileInput");
+
+drop.ondragenter = e => { e.preventDefault(); drop.classList.add("drag"); };
 drop.ondragover = e => { e.preventDefault(); drop.classList.add("drag"); };
-drop.ondragleave = () => drop.classList.remove("drag");
-drop.ondrop = e => { e.preventDefault(); drop.classList.remove("drag"); process(e.dataTransfer.files[0]); };
+drop.ondragleave = e => { drop.classList.remove("drag"); };
+drop.ondrop = e => {
+  e.preventDefault();
+  drop.classList.remove("drag");
+  if (e.dataTransfer.files[0]) process(e.dataTransfer.files[0]);
+  else alert("No file dropped – try again!");
+};
+
 drop.onclick = () => {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = ".sb3";
-  input.onchange = e => process(e.target.files[0]);
-  input.click();
+  fileInput.click();
+};
+
+fileInput.onchange = e => {
+  if (e.target.files[0]) process(e.target.files[0]);
+  else alert("No file selected – try drag instead!");
 };
 
 async function process(file) {
@@ -185,6 +205,7 @@ async function process(file) {
   } catch (err) {
     msg("Error: " + err.message);
     console.error(err);
+    alert("Bug hit – console has details. Report to me!");
   }
 }
 

@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Scratch Turbo Optimizer v13 — Real Python Power in Browser</title>
+<title>Scratch Turbo Optimizer v13.1 — Bugfixed Python Power</title>
 <link rel="icon" href="data:,">
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js"></script>
 <style>
   body{margin:0;font-family:system-ui;background:#0f0f0f;color:#fff;height:100vh;display:flex;overflow:hidden}
@@ -12,10 +13,9 @@
   h1{color:#ff6b00;margin:0 0 16px}
   #drop{border:4px dashed #ff6b00;padding:80px 20px;border-radius:16px;margin:24px 0;cursor:pointer;font-size:19px;transition:.3s;position:relative}
   #drop.drag{background:#ff6b0020;border-color:#ffb300}
-  }
   button{background:#ff6b00;color:#fff;border:none;padding:14px 32px;font-size:18px;border-radius:12px;cursor:pointer;margin:8px}
   .cancel{background:#ff0044}
-  .progress{height:36px;background:#333;border-radius:18px;overflow:hidden;margin:20px 0;position:relative;overflow:hidden}
+  .progress{height:36px;background:#333;border-radius:18px;overflow:hidden;margin:20px 0;position:relative}
   .bar{height:100%;width:0%;background:linear-gradient(90deg,#ff6b00,#ffb300);transition:none}
   .pct{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-weight:bold;font-size:18px}
   .stats{background:#222;padding:16px;border-radius:12px;margin-top:20px;font-family:monospace;display:none}
@@ -62,9 +62,9 @@
 
 <div class="main">
   <div class="box">
-    <h1>Scratch Turbo Optimizer v13</h1>
+    <h1>Scratch Turbo Optimizer v13.1</h1>
     <p>Drop .sb3 → Up to <b>95% smaller</b> using real SVGO + cwebp + ffmpeg<br>
-       <b>Now with real Python turbo engine in browser!</b></p>
+       <b>Fixed JSZip load error—now bulletproof on GitHub Pages!</b></p>
     <div id="drop">Drop .sb3 here or click
       <input id="fileInput" type="file" accept=".sb3">
     </div>
@@ -107,7 +107,7 @@ loadPyodideAndPackages();
 function log(text) {
   const l = document.getElementById("log");
   l.style.display = "block";
-  l.textContent += text + "\\n";
+  l.textContent += text + "\n";
   l.scrollTop = l.scrollHeight;
 }
 
@@ -134,6 +134,7 @@ document.getElementById("webpQuality").oninput = function() {
 async function go(file) {
   if (!file || !file.name.toLowerCase().endsWith(".sb3")) return msg("Please drop a .sb3 file");
   if (!pyodideReady) return msg("Python engine still loading... wait a bit!");
+  if (typeof JSZip === 'undefined') return msg("JSZip failed to load—refresh and try again.");
 
   cancel = false;
   document.getElementById("cancel").style.display = "inline-block";
@@ -155,8 +156,7 @@ async function go(file) {
     msg("Extracting project...");
     log("Reading .sb3 as zip...");
 
-    const JSZip = (await import("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js")).default;
-    const zip = await JSZip.loadAsync(file);
+    const zip = await JSZip.loadAsync(file);  // Now reliable—loaded via <script>
     const files = Object.keys(zip.files).filter(f => !zip.files[f].dir);
 
     // Upload to Pyodide FS
@@ -188,20 +188,20 @@ done = 0
 def update_progress():
     global done
     done += 1
-    percent = 10 + 85 * done / total
+    percent = 10 + 85 * done / total if total > 0 else 100
     to_js(document).getElementById("bar").style.width = f"{percent}%"
     to_js(document).querySelector(".pct").textContent = f"{int(percent)}%"
 
 # SVG Optimization (SVGO-like)
-if "${settings.svg}" == "full":
+if "${settings.svg}" != "none":
     import re
-    for f in os.listdir():
+    for f in os.listdir("."):
         if not f.endswith(".svg"): continue
         with open(f, "r", encoding="utf-8") as fp:
             txt = fp.read()
         # Real SVGO-style cleaning
         txt = re.sub(r'<\\?xml.*?\\?>', '', txt, flags=re.I|re.S)
-        txt = re.sub(r'<!DOCTYPE.*?">', '', txt, flags=re.I|re.S)
+        txt = re.sub(r'<!DOCTYPE.*?\\?>', '', txt, flags=re.I|re.S)
         txt = re.sub(r'<!--.*?-->', '', txt, flags=re.S)
         txt = re.sub(r'<metadata[\\s\\S]*?</metadata>', '', txt, flags=re.I)
         txt = re.sub(r'<title[\\s\\S]*?</title>', '', txt, flags=re.I)
@@ -215,7 +215,7 @@ if "${settings.svg}" == "full":
 if ${settings.webp} > 0:
     try:
         import ffmpeg
-        for f in os.listdir():
+        for f in os.listdir("."):
             if f.lower().endswith((".png", ".jpg", ".jpeg")):
                 input_path = f
                 output_path = f.rsplit(".", 1)[0] + ".webp"
@@ -227,13 +227,15 @@ if ${settings.webp} > 0:
                     .run(quiet=True)
                 )
                 os.remove(input_path)
-                os.rename(output_path, f.replace(f.split(".")[-1], "webp"))
+                new_name = f"{hashlib.md5(open(output_path, 'rb').read()).hexdigest()}.webp"
+                os.rename(output_path, new_name)
                 update_progress()
     except Exception as e:
-        console.log("WebP failed (ffmpeg not ready?):", str(e))
+        console.log("WebP failed:", str(e))
+        update_progress()  # Skip gracefully
 
 # Audio Processing
-for f in os.listdir():
+for f in os.listdir("."):
     if f.lower().endswith((".wav", ".mp3")):
         try:
             probe = ffmpeg.probe(f)
@@ -252,19 +254,22 @@ for f in os.listdir():
                     .run(quiet=True)
                 )
                 os.remove(f)
-                os.rename(out_name, out_name)
+                new_name = f"{md5(open(out_name, 'rb').read())}.wav"
+                os.rename(out_name, new_name)
             update_progress()
-        except:
+        except Exception as e:
+            console.log("Audio failed:", str(e))
             update_progress()
 
-# Remap assets
+# Remap assets in project.json
 for target in project["targets"]:
     for key in ["costumes", "sounds"]:
         if key not in target: continue
         for asset in target[key]:
             old = asset["md5ext"]
             if os.path.exists(old):
-                data = open(old, "rb").read()
+                with open(old, "rb") as fp:
+                    data = fp.read()
                 new_hash = md5(data)
                 ext = old.split(".")[-1] if "." in old else "bin"
                 new_name = new_hash + "." + ext
@@ -273,7 +278,8 @@ for target in project["targets"]:
                 asset["dataFormat"] = ext
                 asset["md5ext"] = new_name
 
-open("project.json", "w").write(json.dumps(project, separators=(",", ":")))
+with open("project.json", "w") as fp:
+    json.dump(project, fp, separators=(",", ":"))
 
 print("Optimization complete!")
 to_js(document).getElementById("msg").textContent = "Zipping result..."
@@ -286,8 +292,8 @@ to_js(document).getElementById("msg").textContent = "Zipping result..."
     const fsFiles = pyodide.FS.readdir(".");
     for (const f of fsFiles) {
       if (f === "." || f === "..") continue;
-      const data = pyodide.FS.readFile(f, { encoding: f === "project.json" ? "utf8" : undefined });
-      outZip.file(f, data === undefined ? pyodide.FS.readFile(f) : data);
+      const data = pyodide.FS.readFile(f, { encoding: f === "project.json" ? "utf8" : "binary" });
+      outZip.file(f, typeof data === "string" ? data : new Uint8Array(data));
     }
 
     msg("Finalizing...");
@@ -295,10 +301,10 @@ to_js(document).getElementById("msg").textContent = "Zipping result..."
     const blob = await outZip.generateAsync({type:"blob", compression:"DEFLATE", compressionLevel:9});
     bar(100);
 
-    const savedKB = Math.round((orig - blob.size) / 1024).toFixed(0);
+    const savedKB = Math.round((origSize - blob.size) / 1024);
     document.getElementById("stats").innerHTML = 
-      `${(orig/1048576).toFixed(1)} MB → ${(blob.size/1048576).toFixed(1)} MB<br>` +
-      `<b>Saved ${savedKB} KB — ${((1 - blob.size/orig)*100).toFixed(1)}% smaller!</b>`;
+      `${(origSize/1048576).toFixed(1)} MB → ${(blob.size/1048576).toFixed(1)} MB<br>` +
+      `<b>Saved ${savedKB} KB — ${((1 - blob.size/origSize)*100).toFixed(1)}% smaller!</b>`;
     document.getElementById("stats").style.display = "block";
 
     const url = URL.createObjectURL(blob);
@@ -319,6 +325,7 @@ to_js(document).getElementById("msg").textContent = "Zipping result..."
   } catch (e) {
     msg("Error: " + e.message);
     console.error(e);
+    log("Error details: " + e.message);
   }
 }
 </script>

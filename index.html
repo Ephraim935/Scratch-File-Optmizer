@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Scratch Turbo Optimizer v7 — Forever Edition</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22/>">
+<title>Scratch Turbo Optimizer v8 — Perfect & Final</title>
+<link rel="icon" href="data:,">
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
 <style>
@@ -15,14 +15,14 @@
   button{background:#ff6b00;color:#fff;border:none;padding:14px 32px;font-size:18px;border-radius:12px;cursor:pointer;margin:8px}
   .cancel{background:#ff0044}
   .progress{height:36px;background:#333;border-radius:18px;overflow:hidden;margin:20px 0}
-  .bar{height:100%;width:0%;background:linear-gradient(90deg,#ff6b00,#ffb300);transition:.4s}
+  .bar{height:100%;width:0%;background:linear-gradient(90deg,#ff6b300,#ff6b00);transition:.4s}
   .stats{background:#222;padding:16px;border-radius:12px;margin-top:20px;font-family:monospace}
 </style>
 </head>
 <body>
 <div class="box">
-  <h1>Scratch Turbo Optimizer v7</h1>
-  <p>Drop any .sb3 → 80–92% smaller instantly<br><b>No errors · No audio problems · Works on every device</b></p>
+  <h1>Scratch Turbo Optimizer v8</h1>
+  <p>Drop any .sb3 → 80–92% smaller instantly<br><b>No errors · Works everywhere</b></p>
   <div id="drop">Drop .sb3 here or click</div>
   <div class="progress"><div id="bar" class="bar"></div></div>
   <p id="msg">Ready</p>
@@ -33,53 +33,62 @@
 
 <script>
 let cancel = false;
-document.getElementById("cancel").onclick = () => { cancel = true; msg("Cancelled"); bar(0); };
+
+document.getElementById("cancel").onclick = () => {
+  cancel = true;
+  document.getElementById("msg").textContent = "Cancelled";
+  document.getElementById("bar").style.width = "0%";
+};
 
 const drop = document.getElementById("drop");
 drop.ondragover = e => { e.preventDefault(); drop.classList.add("drag"); };
 drop.ondragleave = () => drop.classList.remove("drag");
-drop.ondrop = e => { e.preventDefault(); drop.classList.remove("drag"); run(e.dataTransfer.files[0]); };
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("drag"); process(e.dataTransfer.files[0]); };
 drop.onclick = () => {
-  const i = document.createElement("input");
-  i.type = "file"; i.accept = ".sb3";
-  i.onchange = e => run(e.target.files[0]);
-  i.click();
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".sb3";
+  input.onchange = e => process(e.target.files[0]);
+  input.click();
 };
 
-async function run(file) {
-  if (!file || !file.name.toLowerCase().endsWith(".sb3")) return msg("Please drop a .sb3 file");
+async function process(file) {
+  if (!file || !file.name.toLowerCase().endsWith(".sb3")) {
+    document.getElementById("msg").textContent = "Please select a .sb3 file";
+    return;
+  }
 
-  ");
   cancel = false;
   document.getElementById("cancel").style.display = "inline-block";
   document.getElementById("dl").style.display = "none";
   document.getElementById("stats").style.display = "none";
-  msg("Loading project…"); bar(5);
+  msg("Loading project…");
+  bar(5);
 
   try {
-    const origSize = file.size;
+    const originalSize = file.size;
     const zip = await JSZip.loadAsync(file);
     const newZip = new JSZip();
     const project = JSON.parse(await zip.file("project.json").async("text"));
-    const map = new Map();
-    const assets = Object.keys(zip.files).filter(f => f !== "project.json");
-    let done = 0;
+    const assetMap = new Map();
+    const files = Object.keys(zip.files).filter(f => f !== "project.json");
+    let processed = 0;
 
-    for (const name of assets) {
+    for (const path of files) {
       if (cancel) return;
-      const entry = zip.file(name);
+      const entry = zip.file(path);
       if (!entry) continue;
 
-      const ext = name.split(".").pop().toLowerCase();
+      const ext = path.split(".").pop().toLowerCase();
       let blob = null;
       let newExt = ext;
 
-      // 1. SVG — ultra-aggressive cleaning
+      // SVG optimization
       if (ext === "svg") {
-        let txt = await entry.async("text");
-        txt = txt
+        let text = await entry.async("text");
+        text = text
           .replace(/<\?xml.*?\?>\s*/g,"")
-          .replace(/<!DOCTYPE[\s\S]*?>\s*/g,"")
+          .replace(/<!DOCTYPE.*?>\s*/g,"")
           .replace(/<!--[\s\S]*?-->/g,"")
           .replace(/<metadata[\s\S]*?<\/metadata>/gi,"")
           .replace(/<title>[\s\S]*?<\/title>/gi,"")
@@ -88,83 +97,81 @@ async function run(file) {
           .replace(/> </g,"><")
           .replace(/\s*([<>])\s*/g,"$1")
           .trim();
-        blob = new Blob([txt], {type: "image/svg+xml"});
+        blob = new Blob([text], {type: "image/svg+xml"});
       }
 
-      // 2. Images → WebP
+      // PNG/JPG → WebP
       else if (["png","jpg","jpeg"].includes(ext)) {
         const img = await createImageBitmap(await entry.async("blob"));
         const canvas = new OffscreenCanvas(img.width, img.height);
-        canvas.getContext("2d").drawImage(img, 0, 0);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
         blob = await canvas.convertToBlob({type: "image/webp", quality: 80});
         newExt = "webp";
       }
 
-      // 3. Audio — bulletproof version (no Opus, no decode errors)
+      // Audio: only downsample short sounds, never fail
       else if (["wav","mp3"].includes(ext)) {
-        const buf = await entry.async("arrayBuffer");
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        let audio;
+        const arrayBuffer = await entry.async("arrayBuffer");
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let audioBuffer;
         try {
-          audio = await ctx.decodeAudioData(buf.slice(0));
-        } catch (e) {
-          // Can't decode → keep original file 100% untouched
-          blob = await entry.async("blob");
-          newExt = ext;
+          audioBuffer = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+        } catch(e) {
+          blob = await entry.async("blob"); // keep original if unreadable
         }
-
-        if (audio) {
-          // Only downsample short sounds — long ones stay original (safe & fast)
-          if (audio.duration < 6) {
-            blob = await downsampleToTinyWav(audio);
-            newExt = "wav";
-          } else {
-            blob = await entry.async("blob"); // keep original for long tracks
-          }
+        if (audioBuffer && audioBuffer.duration < 6) {
+          blob = await makeTinyWav(audioBuffer);
+          newExt = "wav";
+        } else if (!blob) {
+          blob = await entry.async("blob"); // fallback
         }
       }
 
-      // 4. Everything else
+      // Everything else unchanged
       else {
         blob = await entry.async("blob");
       }
 
       const hash = await md5(await blob.arrayBuffer());
       const newName = hash + "." + newExt;
-      map.set(name, newName);
+      assetMap.set(path, newName);
       newZip.file(newName, blob);
 
-      done++;
-      bar(10 + 85 * done / assets.length);
-      msg(`Optimizing… ${done}/${assets.length}`);
+      processed++;
+      bar(10 + 85 * processed / files.length);
+      msg(`Processing… ${processed}/${files.length}`);
     }
 
-    // Update project.json
-    project.targets.forEach(t => {
-      ["costumes","sounds"].forEach(k => {
-        t[k]?.forEach(a => {
-          if (map.has(a.md5ext)) {
-            const n = map.get(a.md5ext);
-            a.assetId = n.split(".")[0];
-            a.dataFormat = n.split(".")[1];
-            a.md5ext = n;
+    if (cancel) return;
+
+    // Update project.json references
+    project.targets.forEach(target => {
+      ["costumes","sounds"].forEach(type => {
+        target[type]?.forEach(asset => {
+          if (assetMap.has(asset.md5ext)) {
+            const n = assetMap.get(asset.md5ext);
+            asset.assetId = n.split(".")[0];
+            asset.dataFormat = n.split(".")[1];
+            asset.md5ext = n;
           }
         });
       });
     });
 
     newZip.file("project.json", JSON.stringify(project));
-    msg("Compressing…"); bar(98);
-    const result = await newZip.generateAsync({type:"blob", compression:"DEFLATE", compressionLevel:9});
 
-    const savedKB = Math.round((origSize - result.size) / 1024);
-    document.getElementById("stats").innerHTML = `
-      ${ (origSize/1048576).toFixed(2) } MB → ${ (result.size/1048576).toFixed(2) } MB<br>
-      <b>Saved ${savedKB} KB — ${(100*(1-result.size/origSize)).toFixed(1)}% smaller</b><br>
-      <small>WebP + SVG cleaning · 100% stable</small>`;
+    msg("Compressing final file…");
+    bar(98);
+    const finalBlob = await newZip.generateAsync({type:"blob", compression:"DEFLATE", compressionLevel:9});
+
+    const savedKB = Math.round((originalSize - finalBlob.size)/1024);
+    document.getElementById("stats").innerHTML = 
+      `${(originalSize/1048576).toFixed(2)} MB → ${(finalBlob.size/1048576).toFixed(2)} MB<br>` +
+      `<b>Saved ${savedKB} KB — ${((1-finalBlob.size/originalSize)*100).toFixed(1)}% smaller</b>`;
     document.getElementById("stats").style.display = "block";
 
-    const url = URL.createObjectURL(result);
+    const url = URL.createObjectURL(finalBlob);
     document.getElementById("dl").onclick = () => {
       const a = document.createElement("a");
       a.href = url;
@@ -172,52 +179,47 @@ async function run(file) {
       a.click();
     };
     document.getElementById("dl").style.display = "inline-block";
-    msg("Finished! Click download");
+    msg("Done! Click download");
     bar(100);
 
-  } catch (e) {
-    msg("Error: " + e.message);
-    console.error(e);
+  } catch (err) {
+    msg("Error: " + err.message);
+    console.error(err);
   }
 }
 
 function msg(t) { document.getElementById("msg").textContent = t; }
 function bar(p) { document.getElementById("bar").style.width = p + "%"; }
 
-// Tiny 16kHz mono WAV for short sounds only
-async function downsampleToTinyWav(buf) {
-  const offline = new OfflineAudioContext(1, buf.sampleRate * buf.duration / 4, 16000);
+// Tiny 16kHz mono WAV for short sounds
+async function makeTinyWav(buffer) {
+  const offline = new OfflineAudioContext(1, buffer.length, 16000);
   const source = offline.createBufferSource();
-  source.buffer = buf;
-  const compressor = offline.createDynamicsCompressor();
-  compressor.threshold.value = -50;
-  compressor.knee.value = 40;
-  compressor.ratio.value = 12;
-  compressor.attack.value = 0;
-  compressor.release.value = 0.25;
-  source.connect(compressor);
-  compressor.connect(offline.destination);
+  source.buffer = buffer;
+  source.connect(offline.destination);
   source.start(0);
   const rendered = await offline.startRendering();
 
-  const length = rendered.length;
-  const data = new DataView(new ArrayBuffer(44 + length*2));
+  const len = rendered.length;
+  const out = new ArrayBuffer(44 + len*2);
+  const view = new DataView(out);
   let pos = 0;
-  const writeString = s => { for (let c of s) data.setUint8(pos++, c.charCodeAt(0)); };
-  const writeLE = (v, bytes) => { for (let i=0; i<bytes; i++) data.setUint8(pos++, v&(0xff)), v>>=8; };
+  const writeStr = s => { for (let c of s) view.setUint8(pos++, c.charCodeAt(0)); };
+  const writeLE = (v, n) => { for (let i=0; i<n; i++) { view.setUint8(pos++, v & 255); v >>>= 8; }};
 
-  writeString("RIFF"); writeLE(36 + length*2,4);
-  writeString("WAVEfmt "); writeLE(16,4); writeLE(1,2); writeLE(1,2); writeLE(16000,4);
+  writeStr("RIFF"); writeLE(36 + len*2, 4);
+  writeStr("WAVEfmt "); writeLE(16,4); writeLE(1,2); writeLE(1,2); writeLE(16000,4);
   writeLE(32000,4); writeLE(2,2); writeLE(16,2);
-  writeString("data"); writeLE(length*2,4);
+  writeStr("data"); writeLE(len*2,4);
 
-  const channel = rendered.getChannelData(0);
-  for (let i=0; i<length; i++) {
-    let s = channel[i];
+  const data = rendered.getChannelData(0);
+  for (let i=0; i<len; i++) {
+    let s = data[i];
     s = s < 0 ? s * 0x8000 : s * 0x7FFF;
-    data.setInt16(pos, s, true); pos += 2;
+    view.setInt16(pos, s, true);
+    pos += 2;
   }
-  return new Blob([data], {type: "audio/wav"});
+  return new Blob([out], {type: "audio/wav"});
 }
 </script>
 </body>

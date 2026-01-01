@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Scratch Turbo Optimizer v17 — Final & Unbreakable</title>
+<title>Scratch Turbo Optimizer v18 — Final & Unbreakable</title>
 <link rel="icon" href="data:,">
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
@@ -62,13 +62,13 @@
 
 <div class="main">
   <div class="box">
-    <h1>Scratch Turbo Optimizer v17</h1>
-    <p>Drop any .sb3 → 80–93% smaller<br><b>Memory fixes · Skip decode/hash if unchanged · Reuse AudioCtx</b></p>
+    <h1>Scratch Turbo Optimizer v18</h1>
+    <p>Drop any .sb3 → 80–93% smaller<br><b>md5 sync fix · Try-catch on hash · More robust</b></p>
     <div id="drop">Drop .sb3 here or click
       <input id="fileInput" type="file" accept=".sb3">
     </div>
     <div class="progress"><div id="bar" class="bar"></div><div class="pct">0%</div></div>
-    <p id="msg">Ready — v17 crushes big projects!</p>
+    <p id="msg">Ready — v18 handles md5 like a pro!</p>
     <button id="dl" style="display:none">Download Optimized.sb3</button>
     <button id="cancel" class="cancel" style="display:none">Cancel</button>
     <div id="stats" class="stats" style="display:none"></div>
@@ -78,7 +78,7 @@
 <script>
 // Settings
 function load() {
-  const s = JSON.parse(localStorage.getItem("sto17") || "{}"); // Updated key
+  const s = JSON.parse(localStorage.getItem("sto18") || "{}"); // Updated key
   document.getElementById("svgMode").value = s.svg || "safe";
   document.getElementById("shortSound").value = s.short || "tiny";
   document.getElementById("longSound").value = s.long || "keep";
@@ -95,7 +95,7 @@ function save() {
     skipOpt: document.getElementById("skipOpt").checked,
     backup: document.getElementById("backup").checked
   };
-  localStorage.setItem("sto17", JSON.stringify(s));
+  localStorage.setItem("sto18", JSON.stringify(s));
 }
 load();
 document.querySelectorAll("select, input").forEach(el => el.onchange = save);
@@ -113,7 +113,7 @@ document.getElementById("cancel").onclick = () => { cancel = true; msg("Cancelle
 
 async function go(file) {
   if (!file || !file.name.toLowerCase().endsWith(".sb3")) return msg("Drop a .sb3 file");
-  const settings = JSON.parse(localStorage.getItem("sto17") || "{}");
+  const settings = JSON.parse(localStorage.getItem("sto18") || "{}");
 
   cancel = false;
   document.getElementById("cancel").style.display = "inline-block";
@@ -143,6 +143,7 @@ async function go(file) {
         newZip.file(name, blob);
         console.log("Added original:", name);
       }));
+      await Promise.all(promises);
       await Promise.all(promises);
       console.log("Added all:", Object.keys(newZip.files).length);
     } else {
@@ -236,11 +237,13 @@ async function go(file) {
             return null;
           });
           if (!hashBuf) continue;
-          let hash = await md5(hashBuf).catch(e => {
+          let hash;
+          try {
+            hash = md5(hashBuf); // Sync, no await
+          } catch (e) {
             console.error(`MD5 fail ${name}: ${e.message}`);
-            return null;
-          });
-          if (!hash) continue;
+            continue;
+          }
           newName = hash + "." + newExt;
         } else {
           newName = name; // Original, skip hash

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Scratch Turbo Optimizer v13 — Final & Unbreakable</title>
+<title>Scratch Turbo Optimizer v14 — Final & Unbreakable</title>
 <link rel="icon" href="data:,">
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
@@ -61,13 +61,13 @@
 
 <div class="main">
   <div class="box">
-    <h1>Scratch Turbo Optimizer v13</h1>
-    <p>Drop any .sb3 → 80–93% smaller<br><b>Fixed all audio errors · Settings panel · 100% safe · No WebP</b></p>
+    <h1>Scratch Turbo Optimizer v14</h1>
+    <p>Drop any .sb3 → 80–93% smaller<br><b>Fixed all audio errors · Settings panel · No WebP</b></p>
     <div id="drop">Drop .sb3 here or click
       <input id="fileInput" type="file" accept=".sb3">
     </div>
     <div class="progress"><div id="bar" class="bar"></div><div class="pct">0%</div></div>
-    <p id="msg">Ready — v13 never crashes!</p>
+    <p id="msg">Ready — v14 never crashes!</p>
     <button id="dl" style="display:none">Download Optimized.sb3</button>
     <button id="cancel" class="cancel" style="display:none">Cancel</button>
     <div id="stats" class="stats" style="display:none"></div>
@@ -77,7 +77,7 @@
 <script>
 // Settings
 function load() {
-  const s = JSON.parse(localStorage.getItem("sto13") || "{}");
+  const s = JSON.parse(localStorage.getItem("sto14") || "{}");
   document.getElementById("svgMode").value = s.svg || "safe";
   document.getElementById("shortSound").value = s.short || "tiny";
   document.getElementById("longSound").value = s.long || "keep";
@@ -92,7 +92,7 @@ function save() {
     removeUnused: document.getElementById("removeUnused").checked,
     backup: document.getElementById("backup").checked
   };
-  localStorage.setItem("sto13", JSON.stringify(s));
+  localStorage.setItem("sto14", JSON.stringify(s));
 }
 load();
 document.querySelectorAll("select, input").forEach(el => el.onchange = save);
@@ -103,7 +103,6 @@ const drop = document.getElementById("drop");
 drop.ondragover = () => drop.classList.add("drag");
 drop.ondragleave = () => drop.classList.remove("drag");
 drop.ondrop = e => { e.preventDefault(); drop.classList.remove("drag"); go(e.dataTransfer.files[0]); };
-drop.onclick = () => document.getElementById("fileInput").click();
 document.getElementById("fileInput").onchange = e => go(e.target.files[0]);
 
 let cancel = false;
@@ -111,7 +110,7 @@ document.getElementById("cancel").onclick = () => { cancel = true; msg("Cancelle
 
 async function go(file) {
   if (!file || !file.name.toLowerCase().endsWith(".sb3")) return msg("Drop a .sb3 file");
-  const settings = JSON.parse(localStorage.getItem("sto13") || "{}");
+  const settings = JSON.parse(localStorage.getItem("sto14") || "{}");
 
   cancel = false;
   document.getElementById("cancel").style.display = "inline-block";
@@ -137,7 +136,7 @@ async function go(file) {
       if (cancel) return;
       const entry = zip.file(name);
       if (!entry) continue;
-      const ext = name.split(".").pop().toLowerCase();
+      let ext = name.split(".").pop().toLowerCase();
       let blob = await entry.async("blob");
       const origAssetSize = blob.size;
       let newExt = ext;
@@ -155,6 +154,7 @@ async function go(file) {
         } else if (["png","jpg","jpeg"].includes(ext)) {
           origImageSize += origAssetSize;
           // No WebP conversion, keep original
+          if (ext === "jpeg") newExt = "jpg";
           newImageSize += blob.size;
         } else if (["wav","mp3"].includes(ext)) {
           origSoundSize += origAssetSize;
@@ -243,6 +243,7 @@ async function go(file) {
 
     const saved = Math.round((origSize - result.size)/1024);
     const statsHtml = 
+      `Optimized ${file.name}:<br>` +
       `${(origSize/1048576).toFixed(1)} MB → ${(result.size/1048576).toFixed(1)} MB<br>` +
       `<b>Saved ${saved} KB — ${((1-result.size/origSize)*100).toFixed(1)}% smaller</b><br>` +
       `SVGs: ${(origSvgSize/1024).toFixed(1)} KB → ${(newSvgSize/1024).toFixed(1)} KB<br>` +

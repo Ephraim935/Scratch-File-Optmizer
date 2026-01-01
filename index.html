@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Scratch Turbo Optimizer v14 — Final & Unbreakable</title>
+<title>Scratch Turbo Optimizer v15 — Final & Unbreakable</title>
 <link rel="icon" href="data:,">
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
@@ -61,13 +61,13 @@
 
 <div class="main">
   <div class="box">
-    <h1>Scratch Turbo Optimizer v14</h1>
+    <h1>Scratch Turbo Optimizer v15</h1>
     <p>Drop any .sb3 → 80–93% smaller<br><b>Fixed all audio errors · Settings panel · No WebP</b></p>
     <div id="drop">Drop .sb3 here or click
       <input id="fileInput" type="file" accept=".sb3">
     </div>
     <div class="progress"><div id="bar" class="bar"></div><div class="pct">0%</div></div>
-    <p id="msg">Ready — v14 never crashes!</p>
+    <p id="msg">Ready — v15 never crashes!</p>
     <button id="dl" style="display:none">Download Optimized.sb3</button>
     <button id="cancel" class="cancel" style="display:none">Cancel</button>
     <div id="stats" class="stats" style="display:none"></div>
@@ -77,7 +77,7 @@
 <script>
 // Settings
 function load() {
-  const s = JSON.parse(localStorage.getItem("sto14") || "{}");
+  const s = JSON.parse(localStorage.getItem("sto15") || "{}");
   document.getElementById("svgMode").value = s.svg || "safe";
   document.getElementById("shortSound").value = s.short || "tiny";
   document.getElementById("longSound").value = s.long || "keep";
@@ -92,7 +92,7 @@ function save() {
     removeUnused: document.getElementById("removeUnused").checked,
     backup: document.getElementById("backup").checked
   };
-  localStorage.setItem("sto14", JSON.stringify(s));
+  localStorage.setItem("sto15", JSON.stringify(s));
 }
 load();
 document.querySelectorAll("select, input").forEach(el => el.onchange = save);
@@ -110,7 +110,7 @@ document.getElementById("cancel").onclick = () => { cancel = true; msg("Cancelle
 
 async function go(file) {
   if (!file || !file.name.toLowerCase().endsWith(".sb3")) return msg("Drop a .sb3 file");
-  const settings = JSON.parse(localStorage.getItem("sto14") || "{}");
+  const settings = JSON.parse(localStorage.getItem("sto15") || "{}");
 
   cancel = false;
   document.getElementById("cancel").style.display = "inline-block";
@@ -122,7 +122,8 @@ async function go(file) {
     const origSize = file.size;
     const zip = await JSZip.loadAsync(file);
     const newZip = new JSZip();
-    const project = JSON.parse(await zip.file("project.json").async("text"));
+    let projectText = await zip.file("project.json").async("text");
+    const project = JSON.parse(projectText);
     const map = new Map();
     const assets = Object.keys(zip.files).filter(f => f !== "project.json");
     let done = 0;
@@ -158,10 +159,15 @@ async function go(file) {
           newImageSize += blob.size;
         } else if (["wav","mp3"].includes(ext)) {
           origSoundSize += origAssetSize;
-          const buf = await entry.async("arrayBuffer");
+          let buf = await entry.async("arrayBuffer");
           const ctx = new (window.AudioContext || window.webkitAudioContext)();
-          let audio;
-          try { audio = await ctx.decodeAudioData(buf); } catch(e) { /* keep original */ }
+          let audio = null;
+          try {
+            audio = await ctx.decodeAudioData(buf);
+          } catch (e) {
+            console.error(`Decode error for ${name}: ${e.message}`);
+            // Keep original
+          }
 
           if (audio && audio.duration > 0.01) {
             const isShort = audio.duration < 6;
@@ -180,22 +186,30 @@ async function go(file) {
                 else if (longMode === "tiny") { rate = 16000; ch = 1; }
                 else if (longMode === "aggressive") { rate = 8000; ch = 1; }
               }
-              const frames = Math.max(1, Math.round(audio.length * rate / audio.sampleRate));
-              const offline = new OfflineAudioContext(ch, frames, rate);
-              const src = offline.createBufferSource();
-              src.buffer = audio;
-              src.connect(offline.destination);
-              src.start();
-              const rendered = await offline.startRendering();
-              blob = await wav(rendered, rate);
-              newExt = "wav";
+              let rendered = null;
+              try {
+                const frames = Math.max(1, Math.round(audio.length * rate / audio.sampleRate));
+                const offline = new OfflineAudioContext(ch, frames, rate);
+                const src = offline.createBufferSource();
+                src.buffer = audio;
+                src.connect(offline.destination);
+                src.start();
+                rendered = await offline.startRendering();
+                blob = await wav(rendered, rate);
+                newExt = "wav";
+              } catch (e) {
+                console.error(`Rendering error for ${name}: ${e.message}`);
+                // Keep original blob
+              }
             }
           }
           newSoundSize += blob.size;
+          await ctx.close(); // Close context to free resources
         } else {
           // Other files, keep as is
         }
       } catch (e) {
+        console.error(`General error processing ${name}: ${e.message}`);
         msg(`Error processing ${name}: ${e.message}`);
         // Keep original on error
       }
